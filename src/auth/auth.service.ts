@@ -9,8 +9,17 @@ export class AuthService {
 
   async registerUser(registerUserDTO: RegisterUserDTO) {
     const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(registerUserDTO.password, saltRounds);
 
-    return this.userService.createUser({ ...registerUserDTO, password: hashedPassword });
+    const hashedPassword = await bcrypt.hash(
+      registerUserDTO.password,
+      saltRounds,
+    );
+
+    const user = await this.userService.createUser({
+      ...registerUserDTO,
+      password: hashedPassword,
+    });
+
+    return { type: 'success', message: 'User registered successfuully!', user };
   }
 }

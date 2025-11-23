@@ -6,7 +6,9 @@ import { RegisterUserDTO } from './dto/register-user.dto';
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
   @Post('register')
-  register(@Body() registerUserDTO: RegisterUserDTO) {
-    return this.authService.registerUser(registerUserDTO);
+  async register(@Body() registerUserDTO: RegisterUserDTO) {
+    const user = await this.authService.registerUser(registerUserDTO);
+
+    return { user };
   }
 }

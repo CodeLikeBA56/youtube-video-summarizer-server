@@ -15,11 +15,11 @@ export class AuthService {
       saltRounds,
     );
 
-    const user = await this.userService.createUser({
+    const result = await this.userService.createUser({
       ...registerUserDTO,
       password: hashedPassword,
     });
 
-    return { type: 'success', message: 'User registered successfuully!', user };
+    return { message: 'Account registered successfully!', ...result };
   }
 }

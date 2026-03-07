@@ -1,4 +1,5 @@
-export enum Role {
-  Admin = 'admin',
-  Student = 'student',
+export enum Plans {
+  Basic = 'basic',
+  Pro = 'pro',
+  Annual = 'annual'
 }

@@ -9,7 +9,8 @@ import {
 import { Model } from 'mongoose';
 import { User } from './schema/users.schema';
 import { InjectModel } from '@nestjs/mongoose';
-import { RegisterUserDTO } from 'src/auth/dto/register-user.dto';
+import { RegisterUserDTO, registerUserSchema } from 'src/auth/dto/register-user.dto';
+import { JwtService } from '@nestjs/jwt';
 
 export type UserWithoutPassword = Omit<User, 'password'>;
 
@@ -17,7 +18,10 @@ export type UserWithoutPassword = Omit<User, 'password'>;
 export class UserService {
   private readonly logger = new Logger(UserService.name);
 
-  constructor(@InjectModel(User.name) private userModel: Model<User>) {}
+  constructor(
+    @InjectModel(User.name) private userModel: Model<User>,
+    private readonly jwtService: JwtService,
+  ) { }
 
   private validateEmail(email: string): void {
     if (!email || !email.trim()) {
@@ -30,60 +34,50 @@ export class UserService {
     }
   }
 
-  async createUser(registerUserDTO: RegisterUserDTO): Promise<UserWithoutPassword> {
-    // Input validation
-    this.validateEmail(registerUserDTO.email);
-
-    if (!registerUserDTO.name || !registerUserDTO.name.trim()) {
-      throw new BadRequestException('Name is required and cannot be empty.');
+  async createUser(registerUserDTO: RegisterUserDTO): Promise<{ user: UserWithoutPassword; accessToken: string; refreshToken: string }> {
+    // Input validation with Zod
+    try {
+      registerUserSchema.parse(registerUserDTO);
+    } catch (error) {
+      throw new BadRequestException('Invalid user data provided: ' + error.message);
     }
 
-    if (!registerUserDTO.password || registerUserDTO.password.length < 6) {
-      throw new BadRequestException('Password is required and must be at least 6 characters long.');
+    const email = registerUserDTO.email.trim().toLowerCase();
+
+    // Check if email exists first
+    const existingUser = await this.userModel.findOne({ email });
+    if (existingUser) {
+      throw new ConflictException('Email is already taken.');
     }
 
     try {
       // Generate username from email
-      const username = registerUserDTO.email.split('@')[0].trim();
-
-      if (!username) {
-        throw new BadRequestException('Invalid email format: cannot extract username.');
-      }
+      const username = email.split('@')[0];
 
       // Create user
       const user = await this.userModel.create({
         username,
         name: registerUserDTO.name.trim(),
-        email: registerUserDTO.email.trim().toLowerCase(),
+        email,
         password: registerUserDTO.password,
       });
 
-      // Remove password from response
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { password, ...userObject } = user.toObject();
+      // Generate tokens
+      const payload = { id: user._id, email: user.email };
+      const accessToken = this.jwtService.sign(payload, { expiresIn: '15m', secret: process.env.JWT_SECRET || 'secret' });
+      const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d', secret: process.env.JWT_REFRESH_SECRET || 'refresh_secret' });
+
+      user.refreshToken = refreshToken;
+      await user.save();
+
+      // Remove password and version key from response
+      const { password, ...userObject } = user.toObject({ versionKey: false });
 
       this.logger.log(`User created successfully: ${user.email}`);
-      return userObject as UserWithoutPassword;
-    } catch (error: unknown) {
-      const err = error as { code?: number; message?: string };
-
-      // Handle duplicate key error (MongoDB unique constraint)
-      if (err.code === 11000) {
-        this.logger.warn(`Attempted to create user with duplicate email: ${registerUserDTO.email}`);
-        throw new ConflictException('Email is already taken.');
-      }
-
-      // Handle validation errors
-      if (err.message?.includes('validation failed')) {
-        this.logger.error(`Validation error: ${err.message}`);
-        throw new BadRequestException('Invalid user data provided.');
-      }
-
-      // Handle other errors
-      const errorMessage = err.message || (error instanceof Error ? error.message : String(error));
-      const errorStack = error instanceof Error ? error.stack : '';
-      
-      this.logger.error(`Error creating user: ${errorMessage}`, errorStack);
+      return { user: userObject as UserWithoutPassword, accessToken, refreshToken };
+    } catch (error: any) {
+      const errorMessage = error.message || String(error);
+      this.logger.error(`Error creating user: ${errorMessage}`, error.stack);
       throw new InternalServerErrorException('Failed to create user. Please try again later.');
     }
   }
@@ -94,9 +88,9 @@ export class UserService {
     try {
       // Find user by email, exclude password field
       const user = await this.userModel.findOne(
-          { email: email.trim().toLowerCase() },
-          { name: 1, username: 1, email: 1, role: 1, _id: 1 },
-        )
+        { email: email.trim().toLowerCase() },
+        { password: 0, __v: 0 },
+      )
         .lean()
         .exec();
 

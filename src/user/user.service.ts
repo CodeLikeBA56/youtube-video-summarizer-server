@@ -37,23 +37,29 @@ export class UserService {
   async createUser(registerUserDTO: RegisterUserDTO): Promise<{ user: UserWithoutPassword; accessToken: string; refreshToken: string }> {
     // Input validation with Zod
     try {
-      registerUserSchema.parse(registerUserDTO);
-    } catch (error) {
+      await registerUserSchema.parseAsync(registerUserDTO);
+    } catch (error: any) {
       throw new BadRequestException('Invalid user data provided: ' + error.message);
     }
 
     const email = registerUserDTO.email.trim().toLowerCase();
+    let username = email.split('@')[0];
 
     // Check if email exists first
-    const existingUser = await this.userModel.findOne({ email });
-    if (existingUser) {
+    const existingEmail = await this.userModel.findOne({ email });
+    if (existingEmail) {
       throw new ConflictException('Email is already taken.');
     }
 
-    try {
-      // Generate username from email
-      const username = email.split('@')[0];
+    // Ensure username is unique
+    let usernameExists = await this.userModel.findOne({ username });
+    while (usernameExists) {
+      const randomSuffix = Math.random().toString(36).substring(2, 6);
+      username = `${email.split('@')[0]}_${randomSuffix}`;
+      usernameExists = await this.userModel.findOne({ username });
+    }
 
+    try {
       // Create user
       const user = await this.userModel.create({
         username,
@@ -64,8 +70,8 @@ export class UserService {
 
       // Generate tokens
       const payload = { id: user._id, email: user.email };
-      const accessToken = this.jwtService.sign(payload, { expiresIn: '15m', secret: process.env.JWT_SECRET || 'secret' });
-      const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d', secret: process.env.JWT_REFRESH_SECRET || 'refresh_secret' });
+      const accessToken = await this.generateAccessToken(payload);
+      const refreshToken = await this.generateRefreshToken(payload);
 
       user.refreshToken = refreshToken;
       await user.save();
@@ -109,5 +115,19 @@ export class UserService {
       this.logger.error(`Error fetching user by email: ${errorMessage}`, errorStack);
       throw new InternalServerErrorException('Failed to retrieve user. Please try again later.');
     }
+  }
+
+  async generateAccessToken(payload: any): Promise<string> {
+    return this.jwtService.signAsync(payload, {
+      expiresIn: '15m',
+      secret: process.env.JWT_SECRET || 'secret',
+    });
+  }
+
+  async generateRefreshToken(payload: any): Promise<string> {
+    return this.jwtService.signAsync(payload, {
+      expiresIn: '7d',
+      secret: process.env.JWT_REFRESH_SECRET || 'refresh_secret',
+    });
   }
 }

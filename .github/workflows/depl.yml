@@ -1,0 +1,35 @@
+name: Build and Deploy Docker Image
+
+on: # trigger when
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs: # Define a job called build and push, runs on ubuntu-latest
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Create .env file
+        run: echo "${{ secrets.ENV }}" | base64 -d > .env
+
+      - name: Build and name Docker image
+        run: docker build -t ${{ secrets.DOCKER_USERNAME }}/youtube-video-summary-server:latest .
+
+      - name: Push Docker image
+        run: docker push ${{ secrets.DOCKER_USERNAME }}/youtube-video-summary-server:latest
+
+      - name: Update image metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKER_USERNAME }}/youtube-video-summary-server:latest
+          tags: | 
+            ${{ github.sha }}

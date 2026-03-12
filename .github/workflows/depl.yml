@@ -2,9 +2,9 @@ name: Build and Deploy Docker Image
 
 on: # trigger when
   push:
-    branches: [ main ]
+    branches: [ development ]
   pull_request:
-    branches: [ main ]
+    branches: [ development ]
 
 jobs: # Define a job called build and push, runs on ubuntu-latest
   build-and-push:

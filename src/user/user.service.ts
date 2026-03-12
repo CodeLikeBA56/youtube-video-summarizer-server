@@ -14,6 +14,11 @@ import { JwtService } from '@nestjs/jwt';
 
 export type UserWithoutPassword = Omit<User, 'password'>;
 
+export interface TokenPayload {
+  id: string;
+  email: string;
+}
+
 @Injectable()
 export class UserService {
   private readonly logger = new Logger(UserService.name);
@@ -35,25 +40,24 @@ export class UserService {
   }
 
   async createUser(registerUserDTO: RegisterUserDTO): Promise<{ user: UserWithoutPassword; accessToken: string; refreshToken: string }> {
-    // Input validation with Zod
-    try {
-      registerUserSchema.parse(registerUserDTO);
-    } catch (error) {
-      throw new BadRequestException('Invalid user data provided: ' + error.message);
-    }
-
     const email = registerUserDTO.email.trim().toLowerCase();
+    let username = email.split('@')[0];
 
     // Check if email exists first
-    const existingUser = await this.userModel.findOne({ email });
-    if (existingUser) {
+    const existingEmail = await this.userModel.findOne({ email });
+    if (existingEmail) {
       throw new ConflictException('Email is already taken.');
     }
 
-    try {
-      // Generate username from email
-      const username = email.split('@')[0];
+    // Ensure username is unique
+    let usernameExists = await this.userModel.findOne({ username });
+    while (usernameExists) {
+      const randomSuffix = Math.random().toString(36).substring(2, 6);
+      username = `${email.split('@')[0]}_${randomSuffix}`;
+      usernameExists = await this.userModel.findOne({ username });
+    }
 
+    try {
       // Create user
       const user = await this.userModel.create({
         username,
@@ -63,9 +67,9 @@ export class UserService {
       });
 
       // Generate tokens
-      const payload = { id: user._id, email: user.email };
-      const accessToken = this.jwtService.sign(payload, { expiresIn: '15m', secret: process.env.JWT_SECRET || 'secret' });
-      const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d', secret: process.env.JWT_REFRESH_SECRET || 'refresh_secret' });
+      const payload = { id: user._id.toString(), email: user.email };
+      const accessToken = await this.generateAccessToken(payload);
+      const refreshToken = await this.generateRefreshToken(payload);
 
       user.refreshToken = refreshToken;
       await user.save();
@@ -108,6 +112,42 @@ export class UserService {
 
       this.logger.error(`Error fetching user by email: ${errorMessage}`, errorStack);
       throw new InternalServerErrorException('Failed to retrieve user. Please try again later.');
+    }
+  }
+
+  async generateAccessToken(payload: TokenPayload): Promise<string> {
+    return this.jwtService.signAsync(payload, {
+      expiresIn: '15m',
+      secret: process.env.JWT_SECRET || 'secret',
+    });
+  }
+
+  async generateRefreshToken(payload: TokenPayload): Promise<string> {
+    return this.jwtService.signAsync(payload, {
+      expiresIn: '7d',
+      secret: process.env.JWT_REFRESH_SECRET || 'refresh_secret',
+    });
+  }
+
+  async verifyAccessToken(token: string): Promise<TokenPayload> {
+    return this.jwtService.verifyAsync<TokenPayload>(token, {
+      secret: process.env.JWT_SECRET,
+    });
+  }
+
+  async verifyRefreshToken(token: string): Promise<TokenPayload> {
+    return this.jwtService.verifyAsync<TokenPayload>(token, {
+      secret: process.env.JWT_REFRESH_SECRET,
+    });
+  }
+
+  async getUserById(id: string): Promise<UserWithoutPassword | null> {
+    try {
+      const user = await this.userModel.findById(id, { password: 0, __v: 0 }).lean().exec();
+      return user ? (user as UserWithoutPassword) : null;
+    } catch (error) {
+      this.logger.error(`Error fetching user by ID: ${id}`, error);
+      throw new InternalServerErrorException('Failed to retrieve user.');
     }
   }
 }
